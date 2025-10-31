@@ -1,0 +1,18 @@
+name: smap_downloader # Ou use o nome antigo se preferir
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pandas
+  - geopandas
+  - rasterio
+  - matplotlib
+  - requests
+  - tqdm
+  # Dependências do GEE (mesmo que não use aqui, é bom ter)
+  - pydrive2 
+  - pip:
+    - earthengine-api
+    - questionary
