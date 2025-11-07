@@ -181,7 +181,7 @@ def main():
         
         while tasks_to_monitor:
             num_tasks_antes = len(tasks_to_monitor)
-            print(f"\nVerificando status de {len(tasks_to_monitor)} tarefas pendentes... (Próxima verificação em 2 min)")
+            print(f"\nVerificando status de {len(tasks_to_monitor)} tarefas pendentes... (Próxima verificação em 5 min)")
             
             for task in list(tasks_to_monitor):
                 task_status_data = check_task_status(task["id"], token)
@@ -195,7 +195,7 @@ def main():
                 if status == 'done':
                     tqdm.write(f"\n🎉 TAREFA CONCLUÍDA: {task['id']} ({task['period']})")
                     tqdm.write("Iniciando download...")
-                    download_files(task_status_data, task['aoi_name'], token)
+                    download_files(task, token)
                     tasks_to_monitor.remove(task) 
                     total_progress_bar.update(1) 
                 
@@ -211,7 +211,7 @@ def main():
                 num_completas = num_tasks_antes - len(tasks_to_monitor)
                 if num_completas > 0:
                      print(f"{num_completas} tarefa(s) concluída(s) nesta verificação.")
-                time.sleep(120) 
+                time.sleep(300) 
         
         total_progress_bar.close()
         print(f"\n--- Processamento da AOI {aoi_name} concluído ---")

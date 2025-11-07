@@ -38,8 +38,13 @@ SMAP_PRODUCTS = {
         'layers': ['RH_rh_mean']
     },
     'SMAP_L4_LAI_09km (SPL4SMGP.008)': {
+        
         'id': 'SPL4SMGP.008',
         'layers': ['Geophysical_Data_leaf_area_index']
+    },
+    'SMAP_L4_Rg_09km (SPL4SMGP.008)': {
+        'id': 'SPL4SMGP.008',
+        'layers': ['Geophysical_Data_radiation_shortwave_downward_flux']
     },
 }
 # ================================================
@@ -141,58 +146,86 @@ def check_task_status(task_id, token):
              return {"status": "failed", "message": "Tarefa não encontrada (falha/expirada)"}
         return None
 
-def download_files(task_data, aoi_name, token):
+def download_files(task, token):
     """
-    Baixa todos os arquivos de uma tarefa concluída.
-    (Idêntico ao script do ECOSTRESS, mas salva em pasta "SMAP_AppEEARS")
+    Baixa todos os arquivos .tif de uma tarefa concluída.
+    'task' é um dicionário: {'id': '...', 'aoi_name': '...', 'period': '...'}
     """
-    if not task_data or 'files' not in task_data:
-        print("Nenhum arquivo encontrado para baixar.")
-        return
-
-    # --- MUDANÇA AQUI ---
-    output_dir = os.path.join(RAW_TIF_DIR, aoi_name, "SMAP_AppEEARS")
-    # --- FIM DA MUDANÇA ---
-    os.makedirs(output_dir, exist_ok=True)
     
+    # --- ETAPA 1: Obter informações da tarefa ---
+    task_id = task['id']
+    aoi_name = task['aoi_name']
+    period_folder_name = task['period'] # Ex: '2015-04-01_to_2015-12-31'
+    
+    bundle_url = API_URL + "bundle/" + task_id
     headers = {'Authorization': f'Bearer {token}'}
     
-    for file_info in task_data['files']:
-        file_id = file_info['file_id']
-        file_name = file_info['file_name']
-        zip_path = os.path.join(output_dir, file_name)
+    try:
+        tqdm.write(f"Buscando lista de arquivos (bundle) para {task_id}...")
+        response = requests.get(bundle_url, headers=headers)
+        response.raise_for_status()
+        task_data = response.json() 
+    except Exception as e:
+        tqdm.write(f"❌ ERRO ao obter lista de arquivos (bundle) para tarefa {task_id}: {e}")
+        return
+
+    # --- ETAPA 2: Filtrar e preparar o diretório de saída ---
+    if not task_data or 'files' not in task_data:
+        tqdm.write("Nenhum arquivo encontrado no bundle da tarefa.")
+        return
+
+    # Filtra para baixar APENAS os arquivos .tif
+    files_to_download = [f for f in task_data['files'] if f['file_name'].endswith('.tif')]
+    
+    if not files_to_download:
+        tqdm.write("AVISO: Tarefa concluída, mas não foram encontrados arquivos .tif nos resultados.")
+        return
+
+    tqdm.write(f"Encontrados {len(files_to_download)} arquivos .tif para baixar...")
+
+    # Cria a pasta de saída base (ex: .../SMAP_AppEEARS/2015-04-01_to_2015-12-31)
+    output_dir_base = os.path.join(RAW_TIF_DIR, aoi_name, "SMAP_AppEEARS", period_folder_name)
+    os.makedirs(output_dir_base, exist_ok=True)
+    
+    # --- ETAPA 3: Baixar cada .tif individualmente ---
+    for file_info in tqdm(files_to_download, desc=f"Baixando TIFs ({period_folder_name})", leave=False):
         
-        if os.path.exists(zip_path.replace('.zip', '')):
-             tqdm.write(f"[OK] Pasta já extraída: {file_name}")
+        file_name = file_info['file_name'] # Ex: "PASTA_PRODUTO/ARQUIVO.tif"
+        file_id = file_info['file_id']
+        
+        # --- CORREÇÃO DA SUBPASTA ---
+        # 1. Normaliza barras (Windows/Linux)
+        relative_file_path = file_name.replace('/', os.path.sep)
+        
+        # 2. Cria o caminho de salvamento completo
+        tif_path = os.path.join(output_dir_base, relative_file_path)
+        
+        # 3. Obtém o diretório-pai deste arquivo
+        tif_dir = os.path.dirname(tif_path)
+        
+        # 4. Cria o diretório-pai (A CORREÇÃO)
+        os.makedirs(tif_dir, exist_ok=True)
+        # --- FIM DA CORREÇÃO ---
+
+        if os.path.exists(tif_path):
+             tqdm.write(f"[OK] Já existe: {file_name}")
              continue
         
-        tqdm.write(f"Baixando: {file_name}...")
-        
-        # 1. Baixar o ZIP
-        download_url = API_URL + "bundle/" + task_data['task_id'] + "/" + file_id
+        download_url = API_URL + "bundle/" + task_id + "/" + file_id
         try:
             response = requests.get(download_url, headers=headers, stream=True)
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
-            block_size = 1024
-            progress_bar = tqdm(total=total_size, unit='B', unit_scale=True, desc=file_name)
-            
-            with open(zip_path, 'wb') as f:
-                for data in response.iter_content(block_size):
-                    progress_bar.update(len(data))
-                    f.write(data)
-            progress_bar.close()
+            block_size = 1024 * 1024 # Chunks de 1MB
+            progress_bar = tqdm(total=total_size, unit='B', unit_scale=True, desc=file_name.split(os.path.sep)[-1][:20], leave=False)
 
-            # 2. Extrair o ZIP
-            tqdm.write(f"Extraindo: {file_name}...")
-            extract_folder = os.path.join(output_dir, file_name.replace('.zip', ''))
-            with zipfile.ZipFile(zip_path, 'r') as z:
-                z.extractall(extract_folder)
-            
-            # 3. Limpar o ZIP
-            os.remove(zip_path)
-            tqdm.write(f"✅ Extraído e limpo: {file_name}")
+            with open(tif_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=block_size):
+                    progress_bar.update(len(chunk))
+                    f.write(chunk)
+            progress_bar.close()
+            # tqdm.write(f"✅ Baixado: {file_name}") # Silencioso para não poluir
 
         except Exception as e:
-            tqdm.write(f"❌ ERRO ao baixar/extrair {file_name}: {e}")
+            tqdm.write(f"❌ ERRO ao baixar {file_name}: {e}")
